@@ -1,0 +1,49 @@
+Start training...
+dataset train metas: 4753
+dataset test metas: 1078
+  0%|                                                                                       | 0/594 [00:00<?, ?it/s]
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  5%|▊                  | 27/594 [00:45<15:51,  1.68s/it, Tr Loss=6.99e+4, Tr Rt=6.99e+3, Tr ph=0.247, Tr nval=10.3]
+Traceback (most recent call last):
+  File "C:\Dev\DL_e2e\train.py", line 448, in <module>
+    train(args)
+  File "C:\Dev\DL_e2e\train.py", line 192, in train
+    for step, (imgs, exts, scs, nvals, ini_Rt, _) in enumerate(train_loader):
+  File "C:\Users\USER\miniconda3\envs\tpu\lib\site-packages\torch\utils\data\dataloader.py", line 634, in __next__
+    data = self._next_data()
+  File "C:\Users\USER\miniconda3\envs\tpu\lib\site-packages\torch\utils\data\dataloader.py", line 678, in _next_data
+    data = self._dataset_fetcher.fetch(index)  # may raise StopIteration
+  File "C:\Users\USER\miniconda3\envs\tpu\lib\site-packages\torch\utils\data\_utils\fetch.py", line 51, in fetch
+    data = [self.dataset[idx] for idx in possibly_batched_index]
+  File "C:\Users\USER\miniconda3\envs\tpu\lib\site-packages\torch\utils\data\_utils\fetch.py", line 51, in <listcomp>
+    data = [self.dataset[idx] for idx in possibly_batched_index]
+  File "C:\Dev\DL_e2e\datasets\Dataset.py", line 150, in __getitem__
+    sin, cos = np.loadtxt(sin_filename, delimiter=','), np.loadtxt(cos_filename, delimiter=',')
+  File "C:\Users\USER\miniconda3\envs\tpu\lib\site-packages\numpy\lib\npyio.py", line 1356, in loadtxt
+    arr = _read(fname, dtype=dtype, comment=comment, delimiter=delimiter,
+  File "C:\Users\USER\miniconda3\envs\tpu\lib\site-packages\numpy\lib\npyio.py", line 975, in _read
+    fh = np.lib._datasource.open(fname, 'rt', encoding=encoding)
+  File "C:\Users\USER\miniconda3\envs\tpu\lib\site-packages\numpy\lib\_datasource.py", line 193, in open
+    return ds.open(path, mode, encoding=encoding, newline=newline)
+  File "C:\Users\USER\miniconda3\envs\tpu\lib\site-packages\numpy\lib\_datasource.py", line 530, in open
+    return _file_openers[ext](found, mode=mode,
+KeyboardInterrupt

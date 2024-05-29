@@ -1,0 +1,39 @@
+2024-05-09 23:46:57,709 INFO    MainThread:38208 [wandb_setup.py:_flush():76] Configure stats pid to 38208
+2024-05-09 23:46:57,709 INFO    MainThread:38208 [wandb_setup.py:_flush():76] Loading settings from C:\Users\USER\.config\wandb\settings
+2024-05-09 23:46:57,709 INFO    MainThread:38208 [wandb_setup.py:_flush():76] Loading settings from C:\Dev\DL_e2e\wandb\settings
+2024-05-09 23:46:57,709 INFO    MainThread:38208 [wandb_setup.py:_flush():76] Loading settings from environment variables: {}
+2024-05-09 23:46:57,709 INFO    MainThread:38208 [wandb_setup.py:_flush():76] Applying setup settings: {'_disable_service': False}
+2024-05-09 23:46:57,709 INFO    MainThread:38208 [wandb_setup.py:_flush():76] Inferring run settings from compute environment: {'program_relpath': 'train_e2e.py', 'program': 'C:\\Dev\\DL_e2e\\train_e2e.py'}
+2024-05-09 23:46:57,709 INFO    MainThread:38208 [wandb_init.py:_log_setup():507] Logging user logs to C:\Dev\DL_e2e\wandb\run-20240509_234657-sopuneh2\logs\debug.log
+2024-05-09 23:46:57,709 INFO    MainThread:38208 [wandb_init.py:_log_setup():508] Logging internal logs to C:\Dev\DL_e2e\wandb\run-20240509_234657-sopuneh2\logs\debug-internal.log
+2024-05-09 23:46:57,709 INFO    MainThread:38208 [wandb_init.py:init():547] calling init triggers
+2024-05-09 23:46:57,709 INFO    MainThread:38208 [wandb_init.py:init():554] wandb.init called with sweep_config: {}
+config: {'epochs': 250, 'batch_size': 128, 'learning_rate': 0.001, 'seed': 42, 'optimizer': 'AdamW', 'scheduler': 'ReduceOP', 'criterion': 'MSE'}
+2024-05-09 23:46:57,710 INFO    MainThread:38208 [wandb_init.py:init():595] starting backend
+2024-05-09 23:46:57,710 INFO    MainThread:38208 [wandb_init.py:init():599] setting up manager
+2024-05-09 23:46:57,713 INFO    MainThread:38208 [backend.py:_multiprocessing_setup():106] multiprocessing start_methods=spawn, using: spawn
+2024-05-09 23:46:57,718 INFO    MainThread:38208 [wandb_init.py:init():605] backend started and connected
+2024-05-09 23:46:57,722 INFO    MainThread:38208 [wandb_init.py:init():695] updated telemetry
+2024-05-09 23:46:57,723 INFO    MainThread:38208 [wandb_init.py:init():732] communicating run to backend with 60.0 second timeout
+2024-05-09 23:46:58,206 INFO    MainThread:38208 [wandb_run.py:_on_init():2176] communicating current version
+2024-05-09 23:46:58,239 INFO    MainThread:38208 [wandb_run.py:_on_init():2185] got version response upgrade_message: "wandb version 0.17.0 is available!  To upgrade, please run:\n $ pip install wandb --upgrade"
+
+2024-05-09 23:46:58,239 INFO    MainThread:38208 [wandb_init.py:init():782] starting run threads in backend
+2024-05-09 23:47:00,256 WARNING MainThread:38208 [wandb_init.py:init():1167] interrupted
+Traceback (most recent call last):
+  File "C:\Users\USER\miniconda3\envs\tpu\lib\site-packages\wandb\sdk\wandb_init.py", line 1145, in init
+    run = wi.init()
+  File "C:\Users\USER\miniconda3\envs\tpu\lib\site-packages\wandb\sdk\wandb_init.py", line 794, in init
+    run_start_result = run_start_handle.wait(timeout=30)
+  File "C:\Users\USER\miniconda3\envs\tpu\lib\site-packages\wandb\sdk\lib\mailbox.py", line 283, in wait
+    found, abandoned = self._slot._get_and_clear(timeout=wait_timeout)
+  File "C:\Users\USER\miniconda3\envs\tpu\lib\site-packages\wandb\sdk\lib\mailbox.py", line 130, in _get_and_clear
+    if self._wait(timeout=timeout):
+  File "C:\Users\USER\miniconda3\envs\tpu\lib\site-packages\wandb\sdk\lib\mailbox.py", line 126, in _wait
+    return self._event.wait(timeout=timeout)
+  File "C:\Users\USER\miniconda3\envs\tpu\lib\threading.py", line 607, in wait
+    signaled = self._cond.wait(timeout)
+  File "C:\Users\USER\miniconda3\envs\tpu\lib\threading.py", line 324, in wait
+    gotit = waiter.acquire(True, timeout)
+KeyboardInterrupt
+2024-05-09 23:47:09,227 WARNING MsgRouterThr:38208 [router.py:message_loop():77] message_loop has been closed

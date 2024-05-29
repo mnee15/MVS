@@ -1,0 +1,63 @@
+Start training...
+dataset train metas: 4753
+dataset test metas: 1078
+  0%|                                                                                       | 0/594 [00:00<?, ?it/s]
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ 12%|██▎                 | 69/594 [01:18<09:54,  1.13s/it, Tr Loss=5.96e+3, Tr Rt=5.91e+3, Tr ph=0.784, Tr uph=55.1]
+Traceback (most recent call last):
+  File "C:\Dev\DL_e2e\train_uph.py", line 460, in <module>
+    train(args)
+  File "C:\Dev\DL_e2e\train_uph.py", line 192, in train
+    for step, (imgs, exts, scs, uphs, ini_Rt, _) in enumerate(train_loader):
+  File "C:\Users\USER\miniconda3\envs\tpu\lib\site-packages\torch\utils\data\dataloader.py", line 634, in __next__
+    data = self._next_data()
+  File "C:\Users\USER\miniconda3\envs\tpu\lib\site-packages\torch\utils\data\dataloader.py", line 678, in _next_data
+    data = self._dataset_fetcher.fetch(index)  # may raise StopIteration
+  File "C:\Users\USER\miniconda3\envs\tpu\lib\site-packages\torch\utils\data\_utils\fetch.py", line 51, in fetch
+    data = [self.dataset[idx] for idx in possibly_batched_index]
+  File "C:\Users\USER\miniconda3\envs\tpu\lib\site-packages\torch\utils\data\_utils\fetch.py", line 51, in <listcomp>
+    data = [self.dataset[idx] for idx in possibly_batched_index]
+  File "C:\Dev\DL_e2e\datasets\Dataset_uph.py", line 146, in __getitem__
+    sin, cos = np.loadtxt(sin_filename, delimiter=','), np.loadtxt(cos_filename, delimiter=',')
+  File "C:\Users\USER\miniconda3\envs\tpu\lib\site-packages\numpy\lib\npyio.py", line 1356, in loadtxt
+    arr = _read(fname, dtype=dtype, comment=comment, delimiter=delimiter,
+  File "C:\Users\USER\miniconda3\envs\tpu\lib\site-packages\numpy\lib\npyio.py", line 999, in _read
+    arr = _load_from_filelike(
+KeyboardInterrupt

@@ -1,0 +1,23 @@
+Start training...
+dataset train metas: 4753
+dataset test metas: 1078
+  0%|                                                                                       | 0/594 [00:00<?, ?it/s]
+  0%|                                                                                       | 0/594 [00:01<?, ?it/s]
+Traceback (most recent call last):
+  File "C:\Dev\DL_e2e\train_uph.py", line 478, in <module>
+    train(args)
+  File "C:\Dev\DL_e2e\train_uph.py", line 283, in train
+    pred_uphs = model_uph(pred_phs, pred_Rt)
+  File "C:\Users\USER\miniconda3\envs\tpu\lib\site-packages\torch\nn\modules\module.py", line 1501, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "C:\Dev\DL_e2e\models\CondiUNet2.py", line 128, in forward
+    condition = self.excitation(condition)
+  File "C:\Users\USER\miniconda3\envs\tpu\lib\site-packages\torch\nn\modules\module.py", line 1501, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "C:\Users\USER\miniconda3\envs\tpu\lib\site-packages\torch\nn\modules\container.py", line 217, in forward
+    input = module(input)
+  File "C:\Users\USER\miniconda3\envs\tpu\lib\site-packages\torch\nn\modules\module.py", line 1501, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "C:\Users\USER\miniconda3\envs\tpu\lib\site-packages\torch\nn\modules\linear.py", line 114, in forward
+    return F.linear(input, self.weight, self.bias)
+RuntimeError: mat1 and mat2 shapes cannot be multiplied (8x24 and 30x6)
