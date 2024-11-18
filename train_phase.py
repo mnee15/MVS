@@ -26,6 +26,7 @@ cudnn.benchmark = True
 parser = argparse.ArgumentParser(description='A PyTorch Implementation of MVSNet')
 parser.add_argument('--mode', default='train', help='train or test', choices=['train', 'test', 'profile'])
 parser.add_argument('--model', default='mvsnet', help='select model')
+parser.add_argument('--bayesian', action='store_true', help='bayesian head')
 
 parser.add_argument('--dataset', default='dtu_yao_phase', help='select dataset')
 parser.add_argument('--trainpath', help='train datapath')
