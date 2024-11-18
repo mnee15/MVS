@@ -8,12 +8,12 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 from torch.autograd import Variable
 import torch.nn.functional as F
+from models import mvsnet
 import numpy as np
 import time
 
 from datasets import find_dataset_def
 from models import *
-from models.mvsnet import NLLKLLoss
 from utils import *
 import gc
 import sys
@@ -26,7 +26,7 @@ cudnn.benchmark = True
 parser = argparse.ArgumentParser(description='A PyTorch Implementation of MVSNet')
 parser.add_argument('--mode', default='train', help='train or test', choices=['train', 'test', 'profile'])
 parser.add_argument('--model', default='mvsnet', help='select model')
-parser.add_argument('--bayesian', action='store_true', help='bayesian head')
+parser.add_argument('--bayesian_mode', action='store_true', help='bayesian head')
 
 parser.add_argument('--dataset', default='dtu_yao_phase', help='select dataset')
 parser.add_argument('--trainpath', help='train datapath')
@@ -41,7 +41,6 @@ parser.add_argument('--wd', type=float, default=0.001, help='weight decay')
 
 parser.add_argument('--batch_size', type=int, default=12, help='train batch size')
 parser.add_argument('--numdepth', type=int, default=384, help='the number of depth values')
-parser.add_argument('--bayesian_mode', default='all', help='the number of depth values')
 parser.add_argument('--interval_scale', type=float, default=1, help='the number of depth values')
 parser.add_argument('--kl_weight', type=float, default=10, help='kl loss weight')
 parser.add_argument('--nll_weight', type=float, default=1, help='nll loss weight')
@@ -93,7 +92,7 @@ TestImgLoader = DataLoader(test_dataset, args.batch_size, shuffle=False, num_wor
 
 # model, optimizer
 # model = MVSNet(refine=args.refine, depth_dim=args.numdepth)
-model = MVSNet(depth_dim=args.numdepth, mode=args.bayesian_mode)
+model = MVSNet(depth_dim=args.numdepth, bayesian_mode=args.bayesian_mode)
 if args.mode in ["train", "test"]:
     model = nn.DataParallel(model)
 model.cuda()
@@ -143,26 +142,28 @@ def train():
             do_summary = global_step % args.summary_freq == 0
             # loss, scalar_outputs, image_outputs = train_sample(sample, detailed_summary=False)
             scalar_outputs, image_outputs = train_sample(sample, kl_weight= args.kl_weight, nll_weight=args.nll_weight, detailed_summary=False)
-            nll_loss, kl_loss = scalar_outputs["nll_loss"], scalar_outputs["kl_loss"]
-            abs_loss, rmse_loss = scalar_outputs["abs_uph_error"], scalar_outputs["rmse_uph_error"]
+
             if do_summary:
                 save_scalars(logger, 'train', scalar_outputs, global_step)
                 save_images(logger, 'train', image_outputs, global_step)
-                # wandb.log({'Tr Loss': round(loss, 4)})
+                logging = {
+                    'Tr Loss': round(scalar_outputs['loss'], 4),
+                    'Tr abs Loss': round(scalar_outputs["abs_uph_error"], 4),
+                    'Tr rmse Loss': round(scalar_outputs["rmse_uph_error"], 4)
+                }
+
+                if args.bayesian_mode:
+                    logging['Tr NLL loss'] = round(scalar_outputs['nll_loss'], 4)
+                    logging['Tr KL loss'] =round(scalar_outputs['kl_loss'], 4)
+
                 if args.wandb:
-                    wandb.log({'Tr NLL Loss': round(nll_loss, 6),
-                            'Tr KL Loss': round(kl_loss, 6),
-                            'Tr abs Loss': round(abs_loss, 6),
-                            'Tr rmse Loss': round(rmse_loss, 6)})
-            del scalar_outputs, image_outputs
-            # print(
-            #     'Epoch {}/{}, Iter {}/{}, train loss = {:.3f}, time = {:.3f}'.format(epoch_idx, args.epochs, batch_idx,
-            #                                                                          len(TrainImgLoader), loss,
-            #                                                                          time.time() - start_time))
+                    wandb.log(logging)
+
             print(
-                'Epoch {}/{}, Iter {}/{}, train nll loss = {:.3f}, train kl loss = {:.3f}, time = {:.3f}'.format(epoch_idx, args.epochs, batch_idx,
-                                                                                     len(TrainImgLoader), nll_loss, kl_loss,
+                'Epoch {}/{}, Iter {}/{}, train loss = {:.3f}, time = {:.3f}'.format(epoch_idx, args.epochs, batch_idx,
+                                                                                     len(TrainImgLoader), scalar_outputs["loss"],
                                                                                      time.time() - start_time))
+            del scalar_outputs, image_outputs
 
         # checkpoint
         if (epoch_idx + 1) % args.save_freq == 0:
@@ -179,23 +180,29 @@ def train():
             global_step = len(TrainImgLoader) * epoch_idx + batch_idx
             do_summary = global_step % args.summary_freq == 0
             scalar_outputs, image_outputs = test_sample(sample, kl_weight= args.kl_weight, nll_weight=args.nll_weight, detailed_summary=False)
-            nll_loss, kl_loss = scalar_outputs["nll_loss"], scalar_outputs["kl_loss"] 
-            abs_loss, rmse_loss = scalar_outputs["abs_uph_error"], scalar_outputs["rmse_uph_error"]
 
             if do_summary:
                 save_scalars(logger, 'test', scalar_outputs, global_step)
                 save_images(logger, 'test', image_outputs, global_step)
-                # wandb.log({'Val Loss': round(loss, 4)})
+
+                logging = {
+                    'Val Loss': round(scalar_outputs['loss'], 4),
+                    'Val abs Loss': round(scalar_outputs["abs_uph_error"], 4),
+                    'Val rmse Loss': round(scalar_outputs["rmse_uph_error"], 4)
+                }
+
+                if args.bayesian_mode:
+                    logging['Val NLL loss'] = round(scalar_outputs['nll_loss'], 4)
+                    logging['Val KL loss'] =round(scalar_outputs['kl_loss'], 4)
+
                 if args.wandb:
-                    wandb.log({'Val NLL Loss': round(nll_loss, 6),
-                            'Val KL Loss': round(kl_loss, 6),
-                            'Val abs Loss': round(abs_loss, 6),
-                            'Val rmse Loss': round(rmse_loss, 6)})
+                    wandb.log(logging)
+
             avg_test_scalars.update(scalar_outputs)
-            del scalar_outputs, image_outputs
             print('Epoch {}/{}, Iter {}/{}, test abs loss = {:.3f}, time = {:3f}'.format(epoch_idx, args.epochs, batch_idx,
-                                                                                     len(TestImgLoader), abs_loss,
+                                                                                     len(TestImgLoader), round(scalar_outputs["abs_uph_error"], 4),
                                                                                      time.time() - start_time))
+            del scalar_outputs, image_outputs
         save_scalars(logger, 'fulltest', avg_test_scalars.mean(), global_step)
         print("avg_test_scalars:", avg_test_scalars.mean())
         # gc.collect()

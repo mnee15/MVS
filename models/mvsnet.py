@@ -90,14 +90,8 @@ class RefineNet(nn.Module):
 
 
 class BayesianRegressionHead2D(nn.Module): 
-    def __init__(self, input_dim=1, mode='all'):
+    def __init__(self, input_dim=1):
         super(BayesianRegressionHead2D, self).__init__()
-        self.mode= mode
-
-        if self.mode == 'all':
-            input_dim=input_dim         
-        else:
-            input_dim=1 
 
         self.conv_mu = nn.Sequential(
             nn.Conv2d(input_dim, input_dim, 3, 1, 1),
@@ -118,15 +112,6 @@ class BayesianRegressionHead2D(nn.Module):
         depth_values_mat = depth_values.repeat(x.shape[2], x.shape[3], 1, 1).permute(2, 3, 0, 1)
 
         x = x * depth_values_mat
-
-        if self.mode == 'mean':
-            x = torch.mean(x, dim=1, keepdim=True)    
-        elif self.mode == 'sum':
-            x = torch.sum(x, dim=1, keepdim=True)
-        elif self.mode == 'wta':
-            x_index = torch.argmax(x, dim=1, keepdim=True)
-            x = torch.gather(depth_values_mat, 1, x_index)
-            # x = torch.gather(depth_values_mat, 1, x_index).squeeze(1)
 
         ## 여기서 나온 x를 normalize 해준다? 이게 맞음 아니야 이거 빼자 이거 뺀게 제일 잘 되었던거 같음
         # x = (x - depth_min) / (depth_max - depth_min)
@@ -177,20 +162,17 @@ class PixelwiseNet(nn.Module):
     
 
 class MVSNet(nn.Module):
-    def __init__(self, refine=False, depth_dim=256, bayesian_mode='all'):
+    def __init__(self, depth_dim=256, bayesian_mode=True):
         super(MVSNet, self).__init__()
-        self.refine = refine
         self.depth_dim = depth_dim
 
         self.feature = FeatureNet()
         self.cost_regularization = CostRegNet()
-        if self.refine:
-            self.refine_network = RefineNet()
 
         self.pixelwise_net = PixelwiseNet()
         self.bayesian_mode = bayesian_mode
         if bayesian_mode:
-            self.bayesian = BayesianRegressionHead2D(input_dim=depth_dim, mode=bayesian_mode)
+            self.bayesian = BayesianRegressionHead2D(input_dim=depth_dim)
 
     def forward(self, imgs, proj_matrices, depth_values):
         imgs = torch.unbind(imgs, 1)
@@ -232,11 +214,12 @@ class MVSNet(nn.Module):
         prob_volume = F.softmax(cost_reg, dim=1)
 
         if self.bayesian_mode:
-            depth_est, sigma = self.bayesian(cost_reg, depth_values=depth_values)
-            # depth_est, sigma = self.bayesian(prob_volume, depth_values=depth_values)
+            # depth_est, sigma = self.bayesian(cost_reg, depth_values=depth_values)
+            depth_est, sigma = self.bayesian(prob_volume, depth_values=depth_values)
             return {"depth": depth_est, "sigma": sigma, "prob_volume": prob_volume}
         else:
             depth_est = depth_regression(prob_volume, depth_values=depth_values)
+            print("none")
             return {"depth": depth_est, "prob_volume": prob_volume}
 
 
@@ -314,28 +297,6 @@ def entropy_loss(prob_volume, depth_gt, mask, depth_value):
 
     return masked_kl_div
 
-
-def mvsnet_loss_KL(depth_est, depth_gt, mask, prob_volume, depth_value): 
-    depth_est = depth_est.squeeze(1)
-    mask = mask > 0.5
-    l1_loss = F.smooth_l1_loss(depth_est[mask], depth_gt[mask], size_average=True) 
-    
-    kl_loss = entropy_loss(prob_volume, depth_gt, mask, depth_value)
-
-    return l1_loss + kl_loss * 0.1
-
-
-# NLL Loss
-def GaussianNLLLoss(depth_est, sigma, depth_gt, mask, beta=0.5):
-    mask = mask > 0.5
-
-    loss = 0.5 * ((depth_est - depth_gt) ** 2 / (torch.exp(sigma) + 1e-6) + sigma) 
-    if beta > 0:
-        loss = loss * (torch.exp(sigma).detach() ** beta)
-
-    loss = loss.squeeze(1)
-
-    return torch.mean(loss[mask])
 
 def NLLKLLoss(depth_est, sigma, depth_gt, mask, prob_volume, depth_value, beta=0.5):
     mask = mask > 0.5
