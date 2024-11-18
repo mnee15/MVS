@@ -13,4 +13,4 @@ if [ ! -d $dirAndName ]; then
 fi
 
 python -u train_phase.py --dataset=dtu_yao_phase --batch_size=1 --trainpath=$MVS_TRAINING --trainlist lists/dtu/train.txt --testlist lists/dtu/test.txt \
-    --numdepth=256 --experiment_name $EXP_NAME --logdir $LOG_DIR --bayesian_mode all --wandb | tee -i $dirAndName
+    --numdepth=256 --experiment_name $EXP_NAME --logdir $LOG_DIR --bayesian_mode all --wandb --bayesian | tee -i $dirAndName

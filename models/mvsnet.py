@@ -57,10 +57,6 @@ class CostRegNet(nn.Module):
             nn.ReLU(inplace=True))
 
         self.prob = nn.Conv3d(8, 1, 3, stride=1, padding=1)
-        # self.prob = nn.Sequential(
-        #     nn.Conv3d(8, 1, 3, stride=1, padding=1),
-        #     nn.BatchNorm3d(1),
-        #     nn.ReLU(inplace=True))
 
     def forward(self, x):
         conv0 = self.conv0(x)
@@ -120,9 +116,7 @@ class BayesianRegressionHead2D(nn.Module):
         # x : B N H W
         depth_min, depth_max = depth_values[0, 0], depth_values[0, -1]
         depth_values_mat = depth_values.repeat(x.shape[2], x.shape[3], 1, 1).permute(2, 3, 0, 1)
-        # print(depth_values_mat.shape)
-        # print(x.shape)
-        # noramlize 해줘서 0에서 1인데 이걸 곱해서 더하는게 맞나? 곱해서 더하는게 맞음 
+
         x = x * depth_values_mat
 
         if self.mode == 'mean':
@@ -183,7 +177,7 @@ class PixelwiseNet(nn.Module):
     
 
 class MVSNet(nn.Module):
-    def __init__(self, refine=False, depth_dim=256, mode='all'):
+    def __init__(self, refine=False, depth_dim=256, bayesian_mode='all'):
         super(MVSNet, self).__init__()
         self.refine = refine
         self.depth_dim = depth_dim
@@ -194,7 +188,9 @@ class MVSNet(nn.Module):
             self.refine_network = RefineNet()
 
         self.pixelwise_net = PixelwiseNet()
-        self.bayesian = BayesianRegressionHead2D(input_dim=depth_dim, mode=mode)
+        self.bayesian_mode = bayesian_mode
+        if bayesian_mode:
+            self.bayesian = BayesianRegressionHead2D(input_dim=depth_dim, mode=bayesian_mode)
 
     def forward(self, imgs, proj_matrices, depth_values):
         imgs = torch.unbind(imgs, 1)
@@ -211,7 +207,6 @@ class MVSNet(nn.Module):
         ref_proj, src_projs = proj_matrices[0], proj_matrices[1:]
 
         ### step 2. differentiable homograph, build cost volume
-        ### 기존 version
         ref_volume = ref_feature.unsqueeze(2).repeat(1, 1, num_depth, 1, 1)
         volume_sum = ref_volume
         volume_sq_sum = ref_volume ** 2
@@ -231,57 +226,18 @@ class MVSNet(nn.Module):
         volume_variance = volume_sq_sum.div_(num_views).sub_(volume_sum.div_(num_views).pow_(2))
         cost_reg = self.cost_regularization(volume_variance)
 
-        ### di-mvs version
-        # batch, feat_channel, height, width = features[0].shape
-        # dtype, device = features[0].dtype, features[0].device
-        # # step 2. differentiable homograph, build cost volume
-        # pixelwise_weight_sum = 1e-5 * torch.ones((batch, 1, 1, height, width), dtype=dtype, device=device)
-        # volume_sum = torch.zeros((batch, feat_channel, num_depth, height, width), dtype=dtype, device=device)
-
-        # view_weights_list = []
-
-        # for src_fea, src_proj in zip(src_features, src_projs):
-        #     # warpped features
-        #     warped_feature = homo_warping(src_fea, src_proj, ref_proj, depth_values)
-        #     warped_volume = (warped_feature * ref_feature.unsqueeze(2)).mean(1, keepdim=True)
-
-        #     # calculate pixel-wise view weights
-        #     view_weight = self.pixelwise_net(warped_volume)
-
-        #     if self.training:
-        #         volume_sum = volume_sum + warped_volume * view_weight.unsqueeze(1)
-        #         pixelwise_weight_sum = pixelwise_weight_sum + view_weight.unsqueeze(1)
-        #     else:
-        #         volume_sum += warped_volume * view_weight.unsqueeze(1)
-        #         pixelwise_weight_sum += view_weight.unsqueeze(1)
-        #     view_weights_list.append(view_weight)
-
-        # #
-        # similarity = volume_sum.div_(pixelwise_weight_sum)
-        # cost_reg = self.cost_regularization(similarity)
-
         # step 3. cost volume regularization
 
         cost_reg = cost_reg.squeeze(1)
         prob_volume = F.softmax(cost_reg, dim=1)
-        # depth = depth_regression(prob_volume, depth_values=depth_values)
 
-        depth_est, sigma = self.bayesian(prob_volume, depth_values=depth_values)
-
-        # step 4. depth map refinement
-        if not self.refine:
-            # return {"depth": depth_est, "photometric_confidence": photometric_confidence, "prob_volume": prob_volume}
-            # return {"depth": depth_est, "sigma": photometric_confidence, "prob_volume": prob_volume, "view_weight": view_weights_list}
+        if self.bayesian_mode:
+            depth_est, sigma = self.bayesian(cost_reg, depth_values=depth_values)
+            # depth_est, sigma = self.bayesian(prob_volume, depth_values=depth_values)
             return {"depth": depth_est, "sigma": sigma, "prob_volume": prob_volume}
         else:
-            # depth_est = depth_est.unsqueeze(1) # Depth: B X 1 X H X W
-            refined_depth = self.refine_network(imgs[0], depth_est)
-
-            depth_est_ms = {
-                "stage1": depth_est, 
-                "stage2": refined_depth
-            }
-            return {"depth": depth_est_ms, "sigma": sigma, "prob_volume": prob_volume}
+            depth_est = depth_regression(prob_volume, depth_values=depth_values)
+            return {"depth": depth_est, "prob_volume": prob_volume}
 
 
 def mvsnet_loss(depth_est, depth_gt, mask):
@@ -313,9 +269,8 @@ def gaussian_distribution(center, sigma, size):
     distribution = torch.exp(-((x - center) ** 2) / (2 * sigma ** 2))
     return distribution / distribution.sum()
 
+
 def entropy_loss(prob_volume, depth_gt, mask, depth_value):
-    mask_true = mask
-    # valid_pixel_num = torch.sum(mask_true, dim=[1, 2]) + 1e-6
     depth_min, depth_max = depth_value[0,0], depth_value[0,-1]
 
     shape = depth_gt.shape  # B,H,W
@@ -329,8 +284,6 @@ def entropy_loss(prob_volume, depth_gt, mask, depth_value):
     # depth_value_mat = (depth_value_mat - depth_min) / (depth_max - depth_min)
 
     gt_index_image = torch.argmin(torch.abs(depth_value_mat - depth_gt.unsqueeze(1)), dim=1)
-
-    # gt_index_image = torch.mul(mask_true, gt_index_image.type(torch.float))
     gt_index_image = torch.round(gt_index_image).type(torch.long).unsqueeze(1)  # B, 1, H, W
 
     sigma = 1
@@ -354,7 +307,7 @@ def entropy_loss(prob_volume, depth_gt, mask, depth_value):
     
     # # Compute KL divergence
     kl_div_image = torch.sum(gt_index_volume_mixed * torch.log((gt_index_volume_mixed + 1e-6) / (prob_volume + 1e-6)), dim=1)
-    masked_kl_div = torch.mean(kl_div_image[mask_true])
+    masked_kl_div = torch.mean(kl_div_image[mask])
     # Compute CE
     # cross_entropy_image = -torch.sum(gt_index_volume * torch.log(prob_volume + 1e-6), dim=1).squeeze(1)
     # masked_kl_div = torch.mean(cross_entropy_image[mask_true])
@@ -388,7 +341,6 @@ def NLLKLLoss(depth_est, sigma, depth_gt, mask, prob_volume, depth_value, beta=0
     mask = mask > 0.5
     depth_est = depth_est.squeeze(1)
     sigma = sigma.squeeze(1)
-    # sigma = torch.clamp(sigma, min=1e-6) ## 너무 음수나와서 cliping 해봄 # 근데 이게 아닌거 같은데.. ㅜ.ㅜ
 
     nll_loss = 0.5 * ((depth_est - depth_gt) ** 2 / (torch.exp(sigma) + 1e-6) + sigma) 
     if beta > 0:
@@ -397,28 +349,4 @@ def NLLKLLoss(depth_est, sigma, depth_gt, mask, prob_volume, depth_value, beta=0
     kl_loss = entropy_loss(prob_volume, depth_gt, mask, depth_value)
     nll_loss = nll_loss.squeeze(1)
 
-    # total_loss = torch.mean(nll_loss[mask]) + kl_loss * 0.1
-
-    # return total_loss
     return torch.mean(nll_loss[mask]), kl_loss
-
-def NLLKL_ms_Loss(depth_est_ms, sigma, depth_gt_ms, mask_ms, prob_volume, depth_value, beta=0.5):
-
-    depth_est_stage1, depth_gt_stage1 = depth_est_ms["stage1"], depth_gt_ms["stage1"]
-    depth_est_stage2, depth_gt_stage2 = depth_est_ms["stage2"], depth_gt_ms["stage2"]
-    depth_est_stage1 = depth_est_stage1.squeeze(1)
-    depth_est_stage2 = depth_est_stage2.squeeze(1)
-
-    mask_stage1, mask_stage2 = mask_ms["stage1"], mask_ms["stage2"]
-    sigma = sigma.squeeze(1)
-
-    nll_loss = 0.5 * ((depth_est_stage1 - depth_gt_stage1) ** 2 / (torch.exp(sigma) + 1e-6) + sigma) 
-    if beta > 0:
-        nll_loss = nll_loss * (torch.exp(sigma).detach() ** beta)
-
-    kl_loss = entropy_loss(prob_volume, depth_gt_stage1, mask_stage1, depth_value)
-    nll_loss = nll_loss.squeeze(1)
-
-    # print(depth_est_stage2.shape)
-    refine_loss = F.smooth_l1_loss(depth_est_stage2[mask_stage2], depth_gt_stage2[mask_stage2], size_average=True) 
-    return torch.mean(nll_loss[mask_stage1]), kl_loss, refine_loss
