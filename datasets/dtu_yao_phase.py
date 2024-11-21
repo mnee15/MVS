@@ -8,7 +8,7 @@ import cv2
 
 # the DTU dataset preprocessed by Yao Yao (only for training)
 class MVSDataset(Dataset):
-    def __init__(self, datapath, listfile, mode, nviews, ndepths=192, interval_scale=1.0, refine=False, **kwargs):
+    def __init__(self, datapath, listfile, mode, nviews, ndepths=192, interval_scale=1.0, **kwargs):
         super(MVSDataset, self).__init__()
         self.datapath = datapath
         self.listfile = listfile
@@ -17,10 +17,8 @@ class MVSDataset(Dataset):
         self.ndepths = ndepths
         self.interval_scale = interval_scale
         self.depth_min = 200
-        # self.depth_scale = 360 / ndepths
         self.pitch = 36
         self.depth_scale = 200 / ndepths
-        self.refine = refine
 
         assert self.mode in ["train", "val", "test"]
         self.metas = self.build_list()
@@ -86,6 +84,32 @@ class MVSDataset(Dataset):
     def read_depth(self, filename):
         # read pfm depth file
         return np.array(read_pfm(filename)[0], dtype=np.float32)
+    
+
+    def disp_to_depth(self, disp, min_depth, max_depth):
+        min_disp = 1 / max_depth
+
+        max_disp = 1 / min_depth
+
+        scaled_disp = min_disp + (max_disp - min_disp) * disp
+
+        # scaled_disp = scaled_disp.clamp(min=1e-4)
+        scaled_disp = np.clip(scaled_disp, 1e-4, None)
+        depth = 1 / scaled_disp
+        return scaled_disp, depth
+
+
+    def depth_to_disp(self, depth, min_depth, max_depth):
+        scaled_disp = 1 / depth
+
+        min_disp = 1 / max_depth
+
+        max_disp = 1 / min_depth
+
+        disp = (scaled_disp - min_disp) / ((max_disp - min_disp))
+
+        return disp
+
 
     def __getitem__(self, idx):
         meta = self.metas[idx]
@@ -99,12 +123,11 @@ class MVSDataset(Dataset):
         depth_values = None
         proj_matrices = []
 
-        # Random A and B values generated once per sample
-        # A = np.random.uniform(100, 120)
+        # Random A and B
         # A = np.random.uniform(100, 120)
         # B = np.random.uniform(80, 100)
         A, B = 127.5, 127.5
-        gamma = np.random.uniform(0.9, 1.1)  # gamma 값의 범위 설정
+        gamma = np.random.uniform(0.9, 1.1)  # gamma
 
         for i, vid in enumerate(view_ids):
             # NOTE that the id in image file names is from 1 to 49 (not 0~48)
@@ -115,29 +138,17 @@ class MVSDataset(Dataset):
             uph_filename = os.path.join(self.datapath, 'uph_32/{}_train/{:0>3}.npy'.format(scan, vid))
             proj_mat_filename = os.path.join(self.datapath, 'cam/train/{:0>8}_cam.txt').format(vid)
 
-            # phase_filename = os.path.join(self.datapath,
-            #                             'ph_16/{}_train/{:0>3}.npy'.format(scan, vid))
-            # mask_filename = os.path.join(self.datapath, 'mask/{}_train/{:0>3}.png'.format(scan, vid))
-            # uph_filename = os.path.join(self.datapath, 'uph_16/{}_train/{:0>3}.npy'.format(scan, vid))
-            # proj_mat_filename = os.path.join(self.datapath, 'cam/train/{:0>8}_cam.txt').format(vid)
-
             ## before
             # phase = self.read_phase(phase_filename)
             # phases.append(phase)
-
-            # ## after
-            # fringe = (cv2.imread(fringe_path, 0) - 127.5) / 127.5
-            # fringe = fringe.astype(np.float32)
-            # fringe = np.expand_dims(fringe, axis=0)
-            # augmented_fringe = (A + B * fringe) 
-            # gamma_distorted_phase = np.power(augmented_fringe, gamma) / 255
-            # phases.append(gamma_distorted_phase)
 
             ## after
             fringe = (cv2.imread(fringe_path, 0) - 127.5) / 127.5
             fringe = fringe.astype(np.float32)
             fringe = np.expand_dims(fringe, axis=0)
             augmented_fringe = (A + B * fringe) / 255
+            ## gamma
+            # augmented_fringe = np.power(augmented_fringe, gamma) / 255
             phases.append(augmented_fringe)
 
             intrinsics, extrinsics, _, _ = self.read_cam_file(proj_mat_filename)
@@ -147,30 +158,27 @@ class MVSDataset(Dataset):
             proj_mat[:3, :4] = np.matmul(intrinsics, proj_mat[:3, :4])
             proj_matrices.append(proj_mat)
 
-            # depth_min = 5
             if i == 0:  # reference view
-                depth_values = np.arange(self.depth_min, self.depth_scale * self.ndepths + self.depth_min, self.depth_scale,
-                                         dtype=np.float32)
-
-                # depth_values = np.arange(0, self.depth_scale * self.ndepths + 0, self.depth_scale,
-                #     dtype=np.float32)
-
-                mask = self.read_img(mask_filename)
-                if self.refine:
-                    mask = cv2.resize(mask, (640, 512), interpolation=cv2.INTER_NEAREST)
-                else:
-                    mask = cv2.resize(mask, (160, 128), interpolation=cv2.INTER_NEAREST)
-                
-                mask = mask[:, :, 0]
+                mask = cv2.imread(mask_filename, 0) / 255
+                mask = cv2.resize(mask, (160, 128), interpolation=cv2.INTER_NEAREST)
                 
                 uph = np.load(uph_filename) + self.depth_min
-                # uph = np.load(uph_filename) / (self.depth_scale * self.ndepths)
+                uph = cv2.resize(uph, (160, 128), interpolation=cv2.INTER_NEAREST)
 
-                if not self.refine:
-                    uph = cv2.resize(uph, (160, 128), interpolation=cv2.INTER_NEAREST)
+                ## original
+                depth_values = np.arange(self.depth_min, self.depth_scale * self.ndepths + self.depth_min, self.depth_scale, dtype=np.float32)
+
+                ## disp
+                # depth_max = self.depth_scale * self.ndepths + self.depth_min
+                # disp_min = 1 / depth_max
+                # disp_max = 1 / self.depth_min
+                # depth_values = np.linspace(disp_min, disp_max, self.ndepths, dtype=np.float32)
+
+                # uph_disp = self.depth_to_disp(uph, self.depth_min, depth_max)
+                # uph = uph_disp
+                # uph_scaled_disp = self.disp_to_depth(uph_disp, self.depth_min, depth_max)[0]
 
         uph = uph.astype(np.float32)
-        # phases = np.stack(phases).transpose([0, 3, 1, 2])
         phases = np.stack(phases)
         proj_matrices = np.stack(proj_matrices)
 

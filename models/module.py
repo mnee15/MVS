@@ -139,6 +139,14 @@ def depth_regression(p, depth_values):
     return depth
 
 
+def scaled_disp_to_disp(scaled_disp,  min_depth, max_depth):
+    min_disp = 1 / max_depth
+
+    max_disp = 1 / min_depth
+    disp = (scaled_disp - min_disp) / (max_disp - min_disp)
+    return disp
+
+
 def disp_to_depth(disp, min_depth, max_depth):
     min_disp = 1 / max_depth
 
@@ -153,9 +161,7 @@ def disp_to_depth(disp, min_depth, max_depth):
 
 def depth_to_disp(depth, min_depth, max_depth):
     scaled_disp = 1 / depth
-
     min_disp = 1 / max_depth
-
     max_disp = 1 / min_depth
 
     disp = (scaled_disp - min_disp) / ((max_disp - min_disp))

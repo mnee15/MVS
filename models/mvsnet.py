@@ -98,28 +98,23 @@ class BayesianRegressionHead2D(nn.Module):
             nn.ReLU(inplace=True),
             nn.Conv2d(input_dim, 1, 3, 1, 1)
         )
-        self.conv_log_sigma = nn.Sequential(      
+        self.conv_var_sigma = nn.Sequential(      
             nn.Conv2d(input_dim, input_dim, 3, 1, 1),
             nn.ReLU(inplace=True),
-            nn.Conv2d(input_dim, 1, 3, 1, 1)
+            nn.Conv2d(input_dim, 1, 3, 1, 1),
         )
 
 
     def forward(self, x, depth_values):
-        # 3D to 2D (mean)
-        # x : B N H W
-        depth_min, depth_max = depth_values[0, 0], depth_values[0, -1]
         depth_values_mat = depth_values.repeat(x.shape[2], x.shape[3], 1, 1).permute(2, 3, 0, 1)
-
-        x = x * depth_values_mat
-
-        ## 여기서 나온 x를 normalize 해준다? 이게 맞음 아니야 이거 빼자 이거 뺀게 제일 잘 되었던거 같음
-        # x = (x - depth_min) / (depth_max - depth_min)
-        # x = x / 360
+        disp_min, disp_max = depth_values[:, 0], depth_values[:, -1]
+        x = (x * depth_values_mat - disp_min) / (disp_max - disp_min)
 
         # mu, sigma
         mu = self.conv_mu(x) 
-        sigma = self.conv_log_sigma(x) 
+        var = self.conv_var_sigma(x)
+        var = F.elu(var) + 1.0 + 1e-10
+        sigma = torch.sqrt(var)
 
         return mu, sigma
 
@@ -212,6 +207,12 @@ class MVSNet(nn.Module):
 
         cost_reg = cost_reg.squeeze(1)
         prob_volume = F.softmax(cost_reg, dim=1)
+        
+        ### for disp
+        #### depth_gt: disp, depth_values: scaled disp
+        #### scaled disp -> disp
+        # disp_min, disp_max = depth_values[:, 0], depth_values[:, -1]
+        # depth_values = (depth_values - disp_min) / (disp_max - disp_min)
 
         if self.bayesian_mode:
             # depth_est, sigma = self.bayesian(cost_reg, depth_values=depth_values)
@@ -219,7 +220,6 @@ class MVSNet(nn.Module):
             return {"depth": depth_est, "sigma": sigma, "prob_volume": prob_volume}
         else:
             depth_est = depth_regression(prob_volume, depth_values=depth_values)
-            print("none")
             return {"depth": depth_est, "prob_volume": prob_volume}
 
 
@@ -229,23 +229,6 @@ def mvsnet_loss(depth_est, depth_gt, mask):
 
     return F.smooth_l1_loss(depth_est[mask], depth_gt[mask], size_average=True)
 
-def mvsnet_loss_Grad(depth_est, depth_gt, mask):
-    depth_est = depth_est.squeeze(1)
-    mask = mask > 0.5
-    l1_loss = F.smooth_l1_loss(depth_est[mask], depth_gt[mask], size_average=True)
-
-    mask_x, mask_y = mask[:, 1:, :], mask[:, :, 1:]
-    grad_est_x = (depth_est[:, 1:, :] - depth_est[:, :-1, :])
-    grad_est_y = (depth_est[:, :, 1:] - depth_est[:, :, :-1])
-    grad_gt_x = (depth_gt[:, 1:, :] - depth_gt[:, :-1, :])
-    grad_gt_y = (depth_gt[:, :, 1:] - depth_gt[:, :, :-1])
-
-    l2_loss = nn.MSELoss()
-    grad_loss = (l2_loss(grad_est_x[mask_x], grad_gt_x[mask_x]) + l2_loss(grad_est_y[mask_y], grad_gt_y[mask_y])) / 2 
-
-    # return F.smooth_l1_loss(depth_est * mask, depth_gt * mask, size_average=True)
-    return l1_loss + grad_loss * 0.001
-
 
 def gaussian_distribution(center, sigma, size):
     x = torch.arange(size, device=center.device).float()
@@ -254,7 +237,14 @@ def gaussian_distribution(center, sigma, size):
 
 
 def entropy_loss(prob_volume, depth_gt, mask, depth_value):
-    depth_min, depth_max = depth_value[0,0], depth_value[0,-1]
+
+    ####### for disp 
+    #### depth_gt: disp / depth_value: scaled disp -> need to change in disp
+    # disp_min, disp_max = depth_value[:, 0], depth_value[:, -1]
+    # depth_min_, depth_max_ = 1. / disp_max, 1. / disp_min
+
+    ## scaled disp -> disp
+    # depth_value = (depth_value - disp_min) / (disp_max - disp_min)
 
     shape = depth_gt.shape  # B,H,W
     depth_num = depth_value.shape[1]
@@ -263,8 +253,6 @@ def entropy_loss(prob_volume, depth_gt, mask, depth_value):
         depth_value_mat = depth_value.repeat(shape[1], shape[2], 1, 1).permute(2, 3, 0, 1)  # B,N,H,W
     else:
         depth_value_mat = depth_value
-    ## if normalize
-    # depth_value_mat = (depth_value_mat - depth_min) / (depth_max - depth_min)
 
     gt_index_image = torch.argmin(torch.abs(depth_value_mat - depth_gt.unsqueeze(1)), dim=1)
     gt_index_image = torch.round(gt_index_image).type(torch.long).unsqueeze(1)  # B, 1, H, W
@@ -275,39 +263,45 @@ def entropy_loss(prob_volume, depth_gt, mask, depth_value):
     gt_index_volume = torch.exp(-0.5 * ((indices - gt_index_image) / sigma) ** 2)
     gt_index_volume = gt_index_volume / (sigma * torch.sqrt(torch.tensor(2.0 * torch.pi, device=gt_index_volume.device)))
     gt_index_volume = gt_index_volume / (torch.sum(gt_index_volume, dim=1, keepdim=True))
-
-    ### mixed
-    gt_index_volume1 = torch.exp(-0.5 * ((indices - gt_index_image + 2 * torch.pi) / sigma) ** 2)
-    gt_index_volume1 = gt_index_volume1 / (sigma * torch.sqrt(torch.tensor(2.0 * torch.pi, device=gt_index_volume1.device)))
-    gt_index_volume1 = gt_index_volume1 / (torch.sum(gt_index_volume1, dim=1, keepdim=True))
-
-    gt_index_volume2 = torch.exp(-0.5 * ((indices - gt_index_image - 2 * torch.pi) / sigma) ** 2)
-    gt_index_volume2 = gt_index_volume2 / (sigma * torch.sqrt(torch.tensor(2.0 * torch.pi, device=gt_index_volume2.device)))
-    gt_index_volume2 = gt_index_volume2 / (torch.sum(gt_index_volume2, dim=1, keepdim=True))
-
-    gt_index_volume_mixed = gt_index_volume + gt_index_volume1 * 0.5 + gt_index_volume2 * 0.5
-    gt_index_volume_mixed = gt_index_volume_mixed / (torch.sum(gt_index_volume_mixed, dim=1, keepdim=True))
     
-    # # Compute KL divergence
-    kl_div_image = torch.sum(gt_index_volume_mixed * torch.log((gt_index_volume_mixed + 1e-6) / (prob_volume + 1e-6)), dim=1)
+    ###### Compute KL divergence
+    kl_div_image = torch.sum(gt_index_volume * torch.log((gt_index_volume + 1e-6) / (prob_volume + 1e-6)), dim=1)
     masked_kl_div = torch.mean(kl_div_image[mask])
-    # Compute CE
+
+    ###### Compute CE
     # cross_entropy_image = -torch.sum(gt_index_volume * torch.log(prob_volume + 1e-6), dim=1).squeeze(1)
     # masked_kl_div = torch.mean(cross_entropy_image[mask_true])
 
     return masked_kl_div
 
+def mvsnet_loss_KL(depth_est, depth_gt, mask, prob_volume, depth_value): 
+    depth_est = depth_est.squeeze(1)
+    mask = mask > 0.5
+    l1_loss = F.smooth_l1_loss(depth_est[mask], depth_gt[mask], size_average=True) 
+    
+    kl_loss = entropy_loss(prob_volume, depth_gt, mask, depth_value)
+
+    return l1_loss, kl_loss
 
 def NLLKLLoss(depth_est, sigma, depth_gt, mask, prob_volume, depth_value, beta=0.5):
     mask = mask > 0.5
     depth_est = depth_est.squeeze(1)
     sigma = sigma.squeeze(1)
 
-    nll_loss = 0.5 * ((depth_est - depth_gt) ** 2 / (torch.exp(sigma) + 1e-6) + sigma) 
-    if beta > 0:
-        nll_loss = nll_loss * (torch.exp(sigma).detach() ** beta)
+    var = torch.square(sigma)
+    var[var < 1e-10] = 1e-10
 
     kl_loss = entropy_loss(prob_volume, depth_gt, mask, depth_value)
+    
+    ## bayesian head -> depth_gt: 0~1
+    disp_min, disp_max = depth_value[:, 0], depth_value[:, -1]
+    depth_gt = (depth_gt - disp_min) / (disp_max - disp_min)
+
+    nll_loss = (torch.square(depth_est - depth_gt) / (2 * var)) + (0.5 * torch.log(var))
+
+    if beta > 0:
+        nll_loss = nll_loss * (sigma.detach() ** beta)
+
     nll_loss = nll_loss.squeeze(1)
 
     return torch.mean(nll_loss[mask]), kl_loss

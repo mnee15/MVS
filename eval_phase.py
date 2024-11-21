@@ -30,7 +30,7 @@ parser.add_argument('--testlist', help='testing scan list')
 
 parser.add_argument('--batch_size', type=int, default=1, help='testing batch size')
 parser.add_argument('--numdepth', type=int, default=192, help='the number of depth values')
-parser.add_argument('--bayesian_mode', default='all', help='the number of depth values')
+parser.add_argument('--bayesian_mode', action='store_true', help='bayesian head')
 parser.add_argument('--interval_scale', type=float, default=1, help='the depth interval scale')
 
 parser.add_argument('--loadckpt', default=None, help='load a specific checkpoint')
@@ -103,12 +103,12 @@ def read_pair_file(filename):
 def save_depth():
     # dataset, dataloader
     MVSDataset = find_dataset_def(args.dataset)
-    test_dataset = MVSDataset(args.testpath, args.testlist, "test", 3, args.numdepth, args.interval_scale)
+    test_dataset = MVSDataset(args.testpath, args.testlist, "test", 3, args.numdepth)
     TestImgLoader = DataLoader(test_dataset, args.batch_size, shuffle=False, num_workers=0, drop_last=False)
 
     # model
     # model = MVSNet(refine=args.refine, depth_dim=args.numdepth)
-    model = MVSNet(depth_dim=args.numdepth, mode=args.bayesian_mode)
+    model = MVSNet(depth_dim=args.numdepth, bayesian_mode=args.bayesian_mode)
     model = nn.DataParallel(model)
     model.cuda()
 
@@ -128,23 +128,20 @@ def save_depth():
             filenames = sample["filename"]
 
             # save depth maps and confidence maps
-            for filename, depth_est, sigma, prob_vol in zip(filenames, outputs["depth"],
-                                                                   outputs["sigma"], outputs["prob_volume"]):
-                # depth_filename = os.path.join(args.outdir, filename.format('depth_est', '.npy'))
-                # confidence_filename = os.path.join(args.outdir, filename.format('confidence', '.npy'))
-                depth_filename = os.path.join(args.outdir, 'depth_est', filename + '.npy')
-                confidence_filename = os.path.join(args.outdir, 'sigma', filename + '.npy')
-                prob_volume_filename = os.path.join(args.outdir, 'prob_vol', filename + '.npy')
-                os.makedirs(depth_filename.rsplit('/', 1)[0], exist_ok=True)
-                os.makedirs(confidence_filename.rsplit('/', 1)[0], exist_ok=True)
-                os.makedirs(prob_volume_filename.rsplit('/', 1)[0], exist_ok=True)
-                # save depth maps
-                # save_pfm(depth_filename, depth_est)
-                np.save(depth_filename, depth_est)
-                # save confidence maps
-                # save_pfm(confidence_filename, photometric_confidence)
-                np.save(confidence_filename, sigma)
-                np.save(prob_volume_filename, prob_vol)
+
+            for filename, depth_est, prob_vol in zip(filenames, outputs["depth"], outputs["prob_volume"]):
+                    depth_filename = os.path.join(args.outdir, 'depth_est', filename + '.npy')
+                    prob_volume_filename = os.path.join(args.outdir, 'prob_vol', filename + '.npy')
+                    os.makedirs(depth_filename.rsplit('/', 1)[0], exist_ok=True)
+                    os.makedirs(prob_volume_filename.rsplit('/', 1)[0], exist_ok=True)
+                    np.save(depth_filename, depth_est)
+                    np.save(prob_volume_filename, prob_vol)
+
+            if args.bayesian_mode:
+                for filename, sigma in zip(filenames, outputs["sigma"]):
+                    confidence_filename = os.path.join(args.outdir, 'sigma', filename + '.npy')
+                    os.makedirs(confidence_filename.rsplit('/', 1)[0], exist_ok=True)
+                    np.save(confidence_filename, sigma)
 
             # save depth maps, confidence maps and prob volume
             # for filename, depth_est, sigma, prob_volume, view_weight in zip(filenames, outputs["depth"],

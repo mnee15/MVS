@@ -42,7 +42,7 @@ parser.add_argument('--wd', type=float, default=0.001, help='weight decay')
 parser.add_argument('--batch_size', type=int, default=12, help='train batch size')
 parser.add_argument('--numdepth', type=int, default=384, help='the number of depth values')
 parser.add_argument('--interval_scale', type=float, default=1, help='the number of depth values')
-parser.add_argument('--kl_weight', type=float, default=10, help='kl loss weight')
+parser.add_argument('--kl_weight', type=float, default=1, help='kl loss weight')
 parser.add_argument('--nll_weight', type=float, default=1, help='nll loss weight')
 
 parser.add_argument('--loadckpt', default=None, help='load a specific checkpoint')
@@ -85,19 +85,21 @@ print_args(args)
 
 # dataset, dataloader
 MVSDataset = find_dataset_def(args.dataset)
-train_dataset = MVSDataset(args.trainpath, args.trainlist, "train", 3, args.numdepth, args.interval_scale)
-test_dataset = MVSDataset(args.testpath, args.testlist, "test", 3, args.numdepth, args.interval_scale)
+train_dataset = MVSDataset(args.trainpath, args.trainlist, "train", 3, args.numdepth)
+test_dataset = MVSDataset(args.testpath, args.testlist, "test", 3, args.numdepth)
 TrainImgLoader = DataLoader(train_dataset, args.batch_size, shuffle=True, num_workers=0, drop_last=True)
 TestImgLoader = DataLoader(test_dataset, args.batch_size, shuffle=False, num_workers=0, drop_last=False)
 
 # model, optimizer
-# model = MVSNet(refine=args.refine, depth_dim=args.numdepth)
 model = MVSNet(depth_dim=args.numdepth, bayesian_mode=args.bayesian_mode)
 if args.mode in ["train", "test"]:
     model = nn.DataParallel(model)
 model.cuda()
 
-model_loss = NLLKLLoss
+if args.bayesian_mode:
+    model_loss = NLLKLLoss
+else:
+    model_loss = mvsnet_loss_KL
 
 consist_loss = None
 optimizer = optim.Adam(model.parameters(), lr=args.lr, betas=(0.9, 0.999), weight_decay=args.wd)
@@ -140,7 +142,7 @@ def train():
             start_time = time.time()
             global_step = len(TrainImgLoader) * epoch_idx + batch_idx
             do_summary = global_step % args.summary_freq == 0
-            # loss, scalar_outputs, image_outputs = train_sample(sample, detailed_summary=False)
+
             scalar_outputs, image_outputs = train_sample(sample, kl_weight= args.kl_weight, nll_weight=args.nll_weight, detailed_summary=False)
 
             if do_summary:
@@ -149,12 +151,12 @@ def train():
                 logging = {
                     'Tr Loss': round(scalar_outputs['loss'], 4),
                     'Tr abs Loss': round(scalar_outputs["abs_uph_error"], 4),
-                    'Tr rmse Loss': round(scalar_outputs["rmse_uph_error"], 4)
+                    'Tr rmse Loss': round(scalar_outputs["rmse_uph_error"], 4),
+                    'Tr KL loss': round(scalar_outputs['kl_loss'], 4)
                 }
 
                 if args.bayesian_mode:
                     logging['Tr NLL loss'] = round(scalar_outputs['nll_loss'], 4)
-                    logging['Tr KL loss'] =round(scalar_outputs['kl_loss'], 4)
 
                 if args.wandb:
                     wandb.log(logging)
@@ -188,12 +190,12 @@ def train():
                 logging = {
                     'Val Loss': round(scalar_outputs['loss'], 4),
                     'Val abs Loss': round(scalar_outputs["abs_uph_error"], 4),
-                    'Val rmse Loss': round(scalar_outputs["rmse_uph_error"], 4)
+                    'Val rmse Loss': round(scalar_outputs["rmse_uph_error"], 4),
+                    'Val KL loss': round(scalar_outputs['kl_loss'], 4)
                 }
 
                 if args.bayesian_mode:
                     logging['Val NLL loss'] = round(scalar_outputs['nll_loss'], 4)
-                    logging['Val KL loss'] =round(scalar_outputs['kl_loss'], 4)
 
                 if args.wandb:
                     wandb.log(logging)
@@ -230,37 +232,49 @@ def train_sample(sample, kl_weight, nll_weight, detailed_summary=False):
 
     sample_cuda = tocuda(sample)
     depth_gt = sample_cuda["depth"]
-    # depth_gt_disp = sample_cuda["depth_disp"]
     mask = sample_cuda["mask"]
     depth_value = sample_cuda["depth_values"]
-    # ref_img = sample["imgs"][:, 0]
 
     outputs = model(sample_cuda["imgs"], sample_cuda["proj_matrices"], sample_cuda["depth_values"])
     depth_est = outputs["depth"]
-    # depth_est_disp = outputs["depth_disp"]
-    sigma = outputs["sigma"]
     prob_volume = outputs["prob_volume"]
 
-    # nll_loss, kl_loss = model_loss(depth_est_disp, sigma, depth_gt_disp, mask, prob_volume, depth_value) ## NLLKLLoss
-    nll_loss, kl_loss = model_loss(depth_est, sigma, depth_gt, mask, prob_volume, depth_value) ## NLLKLLoss
+    loss, l1_loss, nll_loss, kl_loss = 0, 0, 0, 0
+    if args.bayesian_mode:
+        sigma = outputs["sigma"]
+        nll_loss, kl_loss = model_loss(depth_est, sigma, depth_gt, mask, prob_volume, depth_value) ## NLLKLLoss
+        loss = nll_loss * nll_weight + kl_loss * kl_weight
+    else:
+        l1_loss, kl_loss = model_loss(depth_est, depth_gt, mask, prob_volume, depth_value)
+        loss = l1_loss + kl_loss * kl_weight
 
-    loss = nll_loss * nll_weight + kl_loss * kl_weight
     loss.backward()
     optimizer.step()
 
-    scalar_outputs = {"loss": loss, "nll_loss": nll_loss, "kl_loss": kl_loss}
-    image_outputs = {"depth_est": depth_est * mask, "depth_gt": sample["depth"],
+    #### scaled disp
+    # depth_est, depth_gt = 1./ depth_est, 1./ depth_gt
+
+    #### disp
+    # depth_min, depth_max = 1. / depth_value[:, -1], 1. / depth_value[:, 0]
+    # depth_est, depth_gt = disp_to_depth(depth_est, depth_min, depth_max)[1], disp_to_depth(depth_gt, depth_min, depth_max)[1]
+
+    scalar_outputs = {'loss': loss, "kl_loss": kl_loss}
+    if args.bayesian_mode:
+        scalar_outputs["nll_loss"] = nll_loss
+        disp_min, disp_max = depth_value[:, 0], depth_value[:, -1]
+        depth_est = depth_est * (disp_max - disp_min) + disp_min
+    else:
+        scalar_outputs["l1_loss"] = l1_loss
+
+    
+    image_outputs = {"depth_est": depth_est * mask, "depth_gt": depth_gt * mask,
                      "ref_img": sample["imgs"][:, 0],
                      "mask": sample["mask"]}
 
     image_outputs["errormap"] = (depth_est - depth_gt).abs() * mask
     scalar_outputs["abs_uph_error"] = AbsDepthError_metrics(depth_est, depth_gt, mask > 0.5)
     scalar_outputs["rmse_uph_error"] = RMSEDepthError_metrics(depth_est, depth_gt, mask > 0.5)
-    # scalar_outputs["thres2mm_error"] = Thres_metrics(depth_est, depth_gt, mask > 0.5, 2)
-    # scalar_outputs["thres4mm_error"] = Thres_metrics(depth_est, depth_gt, mask > 0.5, 4)
-    # scalar_outputs["thres8mm_error"] = Thres_metrics(depth_est, depth_gt, mask > 0.5, 8)
 
-    # return tensor2float(loss), tensor2float(scalar_outputs), image_outputs
     return tensor2float(scalar_outputs), image_outputs
 
 
@@ -270,34 +284,46 @@ def test_sample(sample, kl_weight, nll_weight, detailed_summary=False):
 
     sample_cuda = tocuda(sample)
     depth_gt = sample_cuda["depth"]
-    # depth_gt_disp = sample_cuda["depth_disp"]
     mask = sample_cuda["mask"]
     depth_value = sample_cuda["depth_values"]
 
     with torch.no_grad():
         outputs = model(sample_cuda["imgs"], sample_cuda["proj_matrices"], sample_cuda["depth_values"])
         depth_est = outputs["depth"]
-        # depth_est_disp = outputs["depth_disp"]
-        sigma = outputs["sigma"]
         prob_volume = outputs["prob_volume"]
 
-        nll_loss, kl_loss = model_loss(depth_est, sigma, depth_gt, mask, prob_volume, depth_value) ## NLLKLLoss
-        # nll_loss, kl_loss = model_loss(depth_est_disp, sigma, depth_gt_disp, mask, prob_volume, depth_value) ## NLLKLLoss
-        loss = nll_loss * nll_weight + kl_loss * kl_weight
+        loss, nll_loss, kl_loss = 0, 0, 0
+        if args.bayesian_mode:
+            sigma = outputs["sigma"]
+            nll_loss, kl_loss = model_loss(depth_est, sigma, depth_gt, mask, prob_volume, depth_value) ## NLLKLLoss
+            loss = nll_loss * nll_weight + kl_loss * kl_weight
+        else:
+            l1_loss, kl_loss = model_loss(depth_est, depth_gt, mask, prob_volume, depth_value)
+            loss = l1_loss + kl_loss * kl_weight
 
-        scalar_outputs = {"loss": loss, "nll_loss": nll_loss, "kl_loss": kl_loss}
-        image_outputs = {"depth_est": depth_est * mask, "depth_gt": sample["depth"],
+        scalar_outputs = {'loss': loss, "kl_loss": kl_loss}
+        if args.bayesian_mode:
+            scalar_outputs["nll_loss"] = nll_loss
+            disp_min, disp_max = depth_value[:, 0], depth_value[:, -1]
+            depth_est = depth_est * (disp_max - disp_min) + disp_min
+        else:
+            scalar_outputs["l1_loss"] = l1_loss
+    
+        #### scaled disp
+        # depth_est, depth_gt = 1./ depth_est, 1./ depth_gt
+
+        #### disp
+        # depth_min, depth_max = 1. / depth_value[:, -1], 1. / depth_value[:, 0]
+        # depth_est, depth_gt = disp_to_depth(depth_est, depth_min, depth_max)[1], disp_to_depth(depth_gt, depth_min, depth_max)[1]
+
+        image_outputs = {"depth_est": depth_est * mask, "depth_gt": depth_gt * mask,
                         "ref_img": sample["imgs"][:, 0],
                         "mask": sample["mask"]}
         image_outputs["errormap"] = (depth_est - depth_gt).abs() * mask
 
         scalar_outputs["abs_uph_error"] = AbsDepthError_metrics(depth_est, depth_gt, mask > 0.5)
         scalar_outputs["rmse_uph_error"] = RMSEDepthError_metrics(depth_est, depth_gt, mask > 0.5)
-        # scalar_outputs["thres2mm_error"] = Thres_metrics(depth_est, depth_gt, mask > 0.5, 2)
-        # scalar_outputs["thres4mm_error"] = Thres_metrics(depth_est, depth_gt, mask > 0.5, 4)
-        # scalar_outputs["thres8mm_error"] = Thres_metrics(depth_est, depth_gt, mask > 0.5, 8)
 
-    # return tensor2float(loss), tensor2float(scalar_outputs), image_outputs
     return tensor2float(scalar_outputs), image_outputs
 
 
@@ -340,7 +366,7 @@ if __name__ == '__main__':
         #     "batch_size" : args.batch_size,
         #     "optimizer" : args.optimizer,
         #     "scheduler" : args.scheduler,
-        #     # "criterion" : args.criterions,
+        #     "criterion" : args.criterions,
         # }
         if args.wandb:
             wandb.init(
