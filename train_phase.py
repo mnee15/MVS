@@ -27,6 +27,7 @@ parser = argparse.ArgumentParser(description='A PyTorch Implementation of MVSNet
 parser.add_argument('--mode', default='train', help='train or test', choices=['train', 'test', 'profile'])
 parser.add_argument('--model', default='mvsnet', help='select model')
 parser.add_argument('--bayesian_mode', action='store_true', help='bayesian head')
+parser.add_argument('--prob_vol_mode', action='store_true', help='prob vol guide')
 
 parser.add_argument('--dataset', default='dtu_yao_phase', help='select dataset')
 parser.add_argument('--trainpath', help='train datapath')
@@ -98,8 +99,10 @@ model.cuda()
 
 if args.bayesian_mode:
     model_loss = NLLKLLoss
-else:
+elif args.prob_vol_mode:
     model_loss = mvsnet_loss_KL
+else:
+    model_loss = mvsnet_loss
 
 consist_loss = None
 optimizer = optim.Adam(model.parameters(), lr=args.lr, betas=(0.9, 0.999), weight_decay=args.wd)
@@ -152,11 +155,13 @@ def train():
                     'Tr Loss': round(scalar_outputs['loss'], 4),
                     'Tr abs Loss': round(scalar_outputs["abs_uph_error"], 4),
                     'Tr rmse Loss': round(scalar_outputs["rmse_uph_error"], 4),
-                    'Tr KL loss': round(scalar_outputs['kl_loss'], 4)
                 }
 
                 if args.bayesian_mode:
                     logging['Tr NLL loss'] = round(scalar_outputs['nll_loss'], 4)
+                
+                if args.prob_vol_mode:
+                    logging['Tr KL loss'] = round(scalar_outputs['kl_loss'], 4)
 
                 if args.wandb:
                     wandb.log(logging)
@@ -191,11 +196,13 @@ def train():
                     'Val Loss': round(scalar_outputs['loss'], 4),
                     'Val abs Loss': round(scalar_outputs["abs_uph_error"], 4),
                     'Val rmse Loss': round(scalar_outputs["rmse_uph_error"], 4),
-                    'Val KL loss': round(scalar_outputs['kl_loss'], 4)
                 }
 
                 if args.bayesian_mode:
                     logging['Val NLL loss'] = round(scalar_outputs['nll_loss'], 4)
+
+                if args.prob_vol_mode:
+                    logging['Val KL loss'] = round(scalar_outputs['kl_loss'], 4)
 
                 if args.wandb:
                     wandb.log(logging)
@@ -244,9 +251,11 @@ def train_sample(sample, kl_weight, nll_weight, detailed_summary=False):
         sigma = outputs["sigma"]
         nll_loss, kl_loss = model_loss(depth_est, sigma, depth_gt, mask, prob_volume, depth_value) ## NLLKLLoss
         loss = nll_loss * nll_weight + kl_loss * kl_weight
-    else:
+    elif args.prob_vol_mode:
         l1_loss, kl_loss = model_loss(depth_est, depth_gt, mask, prob_volume, depth_value)
         loss = l1_loss + kl_loss * kl_weight
+    else:
+        loss = model_loss(depth_est, depth_gt, mask)
 
     loss.backward()
     optimizer.step()
@@ -258,15 +267,15 @@ def train_sample(sample, kl_weight, nll_weight, detailed_summary=False):
     # depth_min, depth_max = 1. / depth_value[:, -1], 1. / depth_value[:, 0]
     # depth_est, depth_gt = disp_to_depth(depth_est, depth_min, depth_max)[1], disp_to_depth(depth_gt, depth_min, depth_max)[1]
 
-    scalar_outputs = {'loss': loss, "kl_loss": kl_loss}
+    scalar_outputs = {'loss': loss}
     if args.bayesian_mode:
         scalar_outputs["nll_loss"] = nll_loss
         disp_min, disp_max = depth_value[:, 0], depth_value[:, -1]
         depth_est = depth_est * (disp_max - disp_min) + disp_min
-    else:
+    elif args.prob_vol_mode:
         scalar_outputs["l1_loss"] = l1_loss
+        scalar_outputs["kl_loss"] = kl_loss
 
-    
     image_outputs = {"depth_est": depth_est * mask, "depth_gt": depth_gt * mask,
                      "ref_img": sample["imgs"][:, 0],
                      "mask": sample["mask"]}
@@ -297,24 +306,18 @@ def test_sample(sample, kl_weight, nll_weight, detailed_summary=False):
             sigma = outputs["sigma"]
             nll_loss, kl_loss = model_loss(depth_est, sigma, depth_gt, mask, prob_volume, depth_value) ## NLLKLLoss
             loss = nll_loss * nll_weight + kl_loss * kl_weight
-        else:
+        elif args.prob_vol_mode:
             l1_loss, kl_loss = model_loss(depth_est, depth_gt, mask, prob_volume, depth_value)
             loss = l1_loss + kl_loss * kl_weight
+        else:
+            loss = model_loss(depth_est, depth_gt, mask)
 
-        scalar_outputs = {'loss': loss, "kl_loss": kl_loss}
+        scalar_outputs = {'loss': loss}
         if args.bayesian_mode:
             scalar_outputs["nll_loss"] = nll_loss
-            disp_min, disp_max = depth_value[:, 0], depth_value[:, -1]
-            depth_est = depth_est * (disp_max - disp_min) + disp_min
-        else:
+        elif args.prob_vol_mode:
             scalar_outputs["l1_loss"] = l1_loss
-    
-        #### scaled disp
-        # depth_est, depth_gt = 1./ depth_est, 1./ depth_gt
-
-        #### disp
-        # depth_min, depth_max = 1. / depth_value[:, -1], 1. / depth_value[:, 0]
-        # depth_est, depth_gt = disp_to_depth(depth_est, depth_min, depth_max)[1], disp_to_depth(depth_gt, depth_min, depth_max)[1]
+            scalar_outputs["kl_loss"] = kl_loss
 
         image_outputs = {"depth_est": depth_est * mask, "depth_gt": depth_gt * mask,
                         "ref_img": sample["imgs"][:, 0],

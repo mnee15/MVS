@@ -107,8 +107,9 @@ class BayesianRegressionHead2D(nn.Module):
 
     def forward(self, x, depth_values):
         depth_values_mat = depth_values.repeat(x.shape[2], x.shape[3], 1, 1).permute(2, 3, 0, 1)
-        disp_min, disp_max = depth_values[:, 0], depth_values[:, -1]
-        x = (x * depth_values_mat - disp_min) / (disp_max - disp_min)
+        depth_min, depth_max = depth_values[:, 0], depth_values[:, -1]
+        depth_values_mat = (depth_values_mat - depth_min) / (depth_max - depth_min)
+        x = x * depth_values_mat
 
         # mu, sigma
         mu = self.conv_mu(x) 
@@ -207,12 +208,6 @@ class MVSNet(nn.Module):
 
         cost_reg = cost_reg.squeeze(1)
         prob_volume = F.softmax(cost_reg, dim=1)
-        
-        ### for disp
-        #### depth_gt: disp, depth_values: scaled disp
-        #### scaled disp -> disp
-        # disp_min, disp_max = depth_values[:, 0], depth_values[:, -1]
-        # depth_values = (depth_values - disp_min) / (disp_max - disp_min)
 
         if self.bayesian_mode:
             # depth_est, sigma = self.bayesian(cost_reg, depth_values=depth_values)
@@ -237,15 +232,6 @@ def gaussian_distribution(center, sigma, size):
 
 
 def entropy_loss(prob_volume, depth_gt, mask, depth_value):
-
-    ####### for disp 
-    #### depth_gt: disp / depth_value: scaled disp -> need to change in disp
-    # disp_min, disp_max = depth_value[:, 0], depth_value[:, -1]
-    # depth_min_, depth_max_ = 1. / disp_max, 1. / disp_min
-
-    ## scaled disp -> disp
-    # depth_value = (depth_value - disp_min) / (disp_max - disp_min)
-
     shape = depth_gt.shape  # B,H,W
     depth_num = depth_value.shape[1]
 
@@ -294,8 +280,8 @@ def NLLKLLoss(depth_est, sigma, depth_gt, mask, prob_volume, depth_value, beta=0
     kl_loss = entropy_loss(prob_volume, depth_gt, mask, depth_value)
     
     ## bayesian head -> depth_gt: 0~1
-    disp_min, disp_max = depth_value[:, 0], depth_value[:, -1]
-    depth_gt = (depth_gt - disp_min) / (disp_max - disp_min)
+    depth_min, depth_max = depth_value[:, 0], depth_value[:, -1]
+    depth_gt = (depth_gt - depth_min) / (depth_max - depth_min)
 
     nll_loss = (torch.square(depth_est - depth_gt) / (2 * var)) + (0.5 * torch.log(var))
 

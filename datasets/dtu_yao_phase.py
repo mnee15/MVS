@@ -42,7 +42,7 @@ class MVSDataset(Dataset):
                     # light conditions 0-6
                     # for light_idx in range(7):
                     metas.append((scan, ref_view, src_views))
-        print("dataset", self.mode, "metas:", len(metas))
+        # print("dataset", self.mode, "metas:", len(metas))
         return metas
 
     def __len__(self):
@@ -75,41 +75,10 @@ class MVSDataset(Dataset):
         # scale 0~255 to 0~1
         np_img = np.array(img, dtype=np.float32) / 255.
         return np_img
-    
-    def generate_augmented_data(phase, A_range=(0, 1), B_range=(0, 1)):
-        A = np.random.uniform(*A_range)
-        B = np.random.uniform(*B_range)
-        return A + B * np.cos(phase)
 
     def read_depth(self, filename):
         # read pfm depth file
         return np.array(read_pfm(filename)[0], dtype=np.float32)
-    
-
-    def disp_to_depth(self, disp, min_depth, max_depth):
-        min_disp = 1 / max_depth
-
-        max_disp = 1 / min_depth
-
-        scaled_disp = min_disp + (max_disp - min_disp) * disp
-
-        # scaled_disp = scaled_disp.clamp(min=1e-4)
-        scaled_disp = np.clip(scaled_disp, 1e-4, None)
-        depth = 1 / scaled_disp
-        return scaled_disp, depth
-
-
-    def depth_to_disp(self, depth, min_depth, max_depth):
-        scaled_disp = 1 / depth
-
-        min_disp = 1 / max_depth
-
-        max_disp = 1 / min_depth
-
-        disp = (scaled_disp - min_disp) / ((max_disp - min_disp))
-
-        return disp
-
 
     def __getitem__(self, idx):
         meta = self.metas[idx]
@@ -165,18 +134,7 @@ class MVSDataset(Dataset):
                 uph = np.load(uph_filename) + self.depth_min
                 uph = cv2.resize(uph, (160, 128), interpolation=cv2.INTER_NEAREST)
 
-                ## original
                 depth_values = np.arange(self.depth_min, self.depth_scale * self.ndepths + self.depth_min, self.depth_scale, dtype=np.float32)
-
-                ## disp
-                # depth_max = self.depth_scale * self.ndepths + self.depth_min
-                # disp_min = 1 / depth_max
-                # disp_max = 1 / self.depth_min
-                # depth_values = np.linspace(disp_min, disp_max, self.ndepths, dtype=np.float32)
-
-                # uph_disp = self.depth_to_disp(uph, self.depth_min, depth_max)
-                # uph = uph_disp
-                # uph_scaled_disp = self.disp_to_depth(uph_disp, self.depth_min, depth_max)[0]
 
         uph = uph.astype(np.float32)
         phases = np.stack(phases)
